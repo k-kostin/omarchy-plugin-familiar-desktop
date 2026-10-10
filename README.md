@@ -12,9 +12,9 @@ Familiar Desktop adds a mouse-friendly app dock to Omarchy Quattro. Launch or re
 
 *Rendered QML preview of the settings modal, using illustrative colours. A live Omarchy screenshot will replace this preview after on-device testing.*
 
-## Release preparation
+## Release and development builds
 
-The latest published release is [v0.1.4](https://github.com/tcballard/omarchy-plugin-familiar-desktop/releases/tag/v0.1.4). This branch prepares **v0.1.5**, retaining General, Windows and Mac layouts. For development testing, use the exact source/binary bundle recorded in [PR #81](https://github.com/tcballard/omarchy-plugin-familiar-desktop/pull/81) and follow [DEVELOPMENT.md](docs/DEVELOPMENT.md). Its release-version downloads are not published yet. [Prepared release notes and thanks](docs/v0.1.5.md) describe the changes.
+[v0.1.5 release notes and thanks](docs/v0.1.5.md) describe the plugin-panel icons, desktop fixes and simplification. General, Windows and Mac layouts remain available. For development testing, use the exact source/binary bundle recorded in [PR #81](https://github.com/tcballard/omarchy-plugin-familiar-desktop/pull/81) and follow [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Install
 
@@ -34,7 +34,7 @@ Setup requires the standard Omarchy tools (including curl, jq and coreutils), Li
 
 ### Standalone release installer
 
-The [v0.1.4 release](https://github.com/tcballard/omarchy-plugin-familiar-desktop/releases/tag/v0.1.4) also includes a standalone installer and checksums for recovery. Normal setup uses the native plugin command above.
+The [v0.1.5 release](https://github.com/tcballard/omarchy-plugin-familiar-desktop/releases/tag/v0.1.5) also includes a standalone installer and checksums for recovery. Normal setup uses the native plugin command above.
 
 The installer refuses local source changes, untracked files and unexpected ignored files. It checks compatibility, restores windows on v0.1.0 updates, unloads controls and disables Familiar before checkout, then verifies binaries before setup and enablement. A failed update stops for repair. Missing download tools may prompt for a package-manager password.
 
