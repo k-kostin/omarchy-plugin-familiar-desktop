@@ -42,9 +42,13 @@ Local checks at this boundary also passed Rust formatting/Clippy, the existing N
 
 Preparation changes version metadata to 0.1.5, the three versioned download selectors, release documents and README status. Production QML/JavaScript and Rust implementation must remain byte-identical to the tested development boundary. The version change alters the backend executable; the old development digest must not become the 0.1.5 release pin.
 
+The release-version backend was measured from source `b5f09e3bc2675aa31919377794fdcb498483a0fe`, tree `19ebb7782d8ac7fbacf6386e9f67c471a0268264`, [binary run 38083668720](https://github.com/tcballard/omarchy-plugin-familiar-desktop/actions/runs/38083668720), attempt 1. Artifact `11680894119` (`familiar-desktop-packaging-validation`) had ZIP SHA-256 `0f546abeb19129e03ae5526cc8b945407328086e1200d50db3e50316d49798d4`, matching GitHub. All checksum entries and 272 source-file digests matched; the backend reports `familiar-desktop 0.1.5`. Its reviewed SHA-256 is `8be442335e0143ddde0577aa000c7950eaa3f0090413760fb9cbc900c4739e43`. Hyprbars reproduced the existing digest `7eb0f6162b7342346a9a7c309d067d1634d79dfd71a5ec3c0132d46635b3dc06`.
+
+That measurement bundle was validation-only with `sourcePinsMatch: false`; it is not a publishable artifact. The next source commit records the measured pin and must rebuild into a strict verified release bundle. A backend version string and a green validation-only build are not substitutes for that reproduction.
+
 - [x] Release scope and reporter acknowledgements prepared in [v0.1.5.md](v0.1.5.md).
 - [x] Positive XPS result recorded for the development boundary above.
-- [ ] Measure the 0.1.5 backend from source-bound CI and commit its reviewed digest; retain the independently checked Hyprbars digest.
+- [x] Measure the 0.1.5 backend from source-bound CI and commit its reviewed digest; retain the independently checked Hyprbars digest.
 - [ ] Rebuild and verify a strict `familiar-desktop-release` artifact with `sourcePinsMatch: true`, complete checksums and both actual installers.
 - [ ] Record current-source portable/build/desktop evidence and inspect the release-only diff against the tested boundary.
 - [ ] Record acceptance of the final candidate and Tom's merge authorization.
@@ -57,7 +61,7 @@ No v0.1.5 tag, GitHub Release, marketplace submission or public download is crea
 
 ## Static preflight boundary
 
-The installed release preflight was run against a clean clone of the tested source. Its schema checks found no manifest/path errors; its advisory security scan returned `sudoers-dangerous-passwordless-command` for the disposable desktop VM's `tests/desktop/vm.sh` fixture. Manual inspection confirms that cloud-init grants this permission inside the temporary guest overlay, with a checksum-pinned base image, localhost-only SSH forwarding, no host-directory mount, and cleanup of guest disks and ephemeral keys. The preflight still returns failure for the fixture rule; this is not a passing scan or a claim of runtime security. Installer, process, workflow dependency and distributed agent-instruction advisories remain limited scan results. No scanner rule was suppressed or changed. The initial run against the development checkout also hit its safety limit on local `backend/target` output; the clean clone avoided those generated files.
+The installed release preflight was run against clean clones of the tested source and release-version source `b5f09e3bc2675aa31919377794fdcb498483a0fe`. Strict manifest/path validation passed with no errors or warnings. The advisory security scan returned `sudoers-dangerous-passwordless-command` for the disposable desktop VM's `tests/desktop/vm.sh` fixture. Manual inspection confirms that cloud-init grants this permission inside the temporary guest overlay, with a checksum-pinned base image, localhost-only SSH forwarding, no host-directory mount, and cleanup of guest disks and ephemeral keys. The preflight still returns failure for the fixture rule; this is not a passing scan or a claim of runtime security. Installer, process, workflow dependency and distributed agent-instruction advisories remain limited scan results. No scanner rule was suppressed or changed. The initial run against the development checkout also hit its safety limit on local `backend/target` output; the clean clone avoided those generated files.
 
 ## Follow-up scope
 
