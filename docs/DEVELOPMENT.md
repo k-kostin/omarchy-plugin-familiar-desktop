@@ -73,7 +73,11 @@ bash install-dev.sh
 ```
 
 Requires an existing, working Familiar installation on the supported Linux
-x86_64 / Hyprland ABI, with git, jq and the usual Omarchy tools. No compiler is
+x86_64 / Hyprland ABI, with git, jq and the usual Omarchy tools. On hosts with
+Omarchy’s official titlebar package, Core owns ABI compatibility: the installer
+skips private titlebar setup and supports only guarded source/rollback targets
+(see [migration details](TITLEBAR-MIGRATION.md)). Select **Use Omarchy controls**
+in Familiar after installation; migration from a private backend needs logout/login. No compiler is
 needed. Local source changes and unexpected ignored files stop installation.
 Older installations without `setup-in-app.sh` are supported when their binaries
 match the checksum pins in their installed commit and titlebar ownership matches.

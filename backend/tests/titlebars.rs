@@ -71,6 +71,7 @@ impl Fixture {
             directory: root.join("titlebars"),
             config: root.join("looknfeel.lua"),
             official_library: root.join("system/titlebars.so"),
+            compositor_session: "session-before".into(),
         };
         fs::create_dir_all(&paths.directory).unwrap();
         fs::create_dir_all(&paths.source).unwrap();
@@ -713,10 +714,10 @@ fn official_package_pauses_loader_without_touching_shared_backend_or_settings() 
             .unwrap_err()
             .contains("Omarchy's titlebar package")
     );
-    assert_eq!(f.apply().unwrap()["state"], "blocked");
+    assert_eq!(f.apply().unwrap()["state"], "migration-required");
     assert!(!f.generated().contains("hl.plugin.load"));
     f.args.operation = "disable".into();
-    assert_eq!(f.apply().unwrap()["state"], "blocked");
+    assert_eq!(f.apply().unwrap()["state"], "migration-required");
     titlebars::remove(&f.paths, &mut f.hypr).unwrap();
     assert!(f.hypr.calls.is_empty());
     assert_eq!(fs::read_to_string(&f.paths.config).unwrap(), f.original);
@@ -732,9 +733,135 @@ fn fresh_official_host_does_not_offer_competing_setup() {
     fs::create_dir_all(f.paths.official_library.parent().unwrap()).unwrap();
     fs::write(&f.paths.official_library, "official v0.2.0").unwrap();
     let original = fs::read_to_string(&f.paths.config).unwrap();
-    assert_eq!(f.apply().unwrap()["state"], "blocked");
+    assert_eq!(f.apply().unwrap()["state"], "migration-required");
     assert!(f.setup().is_err());
     assert!(f.hypr.calls.is_empty());
     assert!(!f.paths.directory.join("owner.json").exists());
     assert_eq!(fs::read_to_string(&f.paths.config).unwrap(), original);
+}
+
+fn official(f: &Fixture) {
+    fs::create_dir_all(f.paths.official_library.parent().unwrap()).unwrap();
+    fs::write(&f.paths.official_library, "official").unwrap();
+}
+
+#[test]
+fn official_handoff_keeps_preferences_and_never_mutates_the_compositor() {
+    let mut f = Fixture::new();
+    f.setup().unwrap();
+    f.apply().unwrap();
+    let config = fs::read(&f.paths.config).unwrap();
+    let prefs = f
+        .paths
+        .home
+        .join(".config/omarchy/familiar-desktop-settings.json");
+    common::atomic(&prefs, br#"{"titlebarMode":"mac","dockEnabled":false}"#).unwrap();
+    official(&f);
+    f.hypr.calls.clear();
+    assert_eq!(
+        titlebars::migrate(&f.paths, &mut f.hypr).unwrap()["state"],
+        "restart-required"
+    );
+    assert!(f.hypr.calls.is_empty());
+    assert_eq!(fs::read(&f.paths.config).unwrap(), config);
+    assert!(!f.generated().contains("hl.plugin.load"));
+    assert_eq!(common::read_json(&prefs).unwrap()["titlebarMode"], "mac");
+    assert_eq!(common::read_json(&prefs).unwrap()["dockEnabled"], false);
+    assert_eq!(f.apply().unwrap()["state"], "restart-required");
+    f.paths.compositor_session = "session-after".into();
+    assert_eq!(f.apply().unwrap()["state"], "managed");
+    f.args.operation = "disable".into();
+    assert_eq!(f.apply().unwrap()["state"], "managed");
+    assert!(
+        f.hypr
+            .calls
+            .iter()
+            .all(|c| c[0] == "eval" && c[1].starts_with("assert("))
+    );
+    assert!(f.setup().unwrap_err().contains("will not recreate"));
+    titlebars::remove(&f.paths, &mut f.hypr).unwrap();
+    assert_eq!(fs::read_to_string(&f.paths.config).unwrap(), f.original);
+    assert_eq!(
+        fs::read_to_string(&f.paths.official_library).unwrap(),
+        "official"
+    );
+}
+
+#[test]
+fn fresh_official_handoff_needs_core_but_does_not_require_private_assets() {
+    let mut f = Fixture::new();
+    official(&f);
+    fs::remove_dir_all(f.paths.source.join("bin")).unwrap();
+    f.hypr.probe_ok = false;
+    assert_eq!(
+        titlebars::migrate(&f.paths, &mut f.hypr).unwrap()["state"],
+        "core-required"
+    );
+    f.hypr.probe_ok = true;
+    assert_eq!(f.apply().unwrap()["state"], "managed");
+    assert_eq!(fs::read_to_string(&f.paths.config).unwrap(), f.original);
+    // Core may have no floating workspace, hence no loaded titlebars. This is
+    // delegation, not a claim that a backend is loaded or controls are visible.
+    assert!(!f.hypr.loaded);
+}
+
+#[test]
+fn removed_package_never_resurrects_the_private_backend() {
+    let mut f = Fixture::new();
+    f.setup().unwrap();
+    official(&f);
+    titlebars::migrate(&f.paths, &mut f.hypr).unwrap();
+    fs::remove_file(&f.paths.official_library).unwrap();
+    assert_eq!(f.apply().unwrap()["state"], "package-missing");
+    assert!(f.setup().is_err());
+    assert!(!f.generated().contains("hl.plugin.load"));
+    assert!(f.hypr.calls.iter().all(|c| c.first().unwrap() != "reload"));
+}
+
+#[test]
+fn interrupted_handoff_is_retryable_and_never_restores_the_fork() {
+    let mut f = Fixture::new();
+    f.setup().unwrap();
+    official(&f);
+    let generated = f.paths.directory.join("titlebars.lua");
+    fs::remove_file(&generated).unwrap();
+    fs::create_dir(&generated).unwrap(); // Force the loader write to fail.
+    assert!(titlebars::migrate(&f.paths, &mut f.hypr).is_err());
+    assert_eq!(f.apply().unwrap()["state"], "migration-required");
+    fs::remove_dir(&generated).unwrap();
+    assert_eq!(
+        titlebars::migrate(&f.paths, &mut f.hypr).unwrap()["state"],
+        "restart-required"
+    );
+    assert!(!f.generated().contains("hl.plugin.load"));
+    f.paths.compositor_session = "session-after".into();
+    assert_eq!(
+        titlebars::migrate(&f.paths, &mut f.hypr).unwrap()["state"],
+        "managed"
+    );
+}
+
+#[test]
+fn migration_rejects_edited_hook_foreign_owner_and_unknown_session() {
+    let mut f = Fixture::new();
+    f.setup().unwrap();
+    official(&f);
+    let before = fs::read(f.paths.directory.join("owner.json")).unwrap();
+    let config = fs::read_to_string(&f.paths.config).unwrap();
+    fs::write(
+        &f.paths.config,
+        config.replace("familiarFile:close()", "-- personal edit"),
+    )
+    .unwrap();
+    assert!(titlebars::migrate(&f.paths, &mut f.hypr).is_err());
+    fs::write(&f.paths.config, config).unwrap();
+    f.paths.compositor_session.clear();
+    assert!(titlebars::migrate(&f.paths, &mut f.hypr).is_err());
+    f.paths.compositor_session = "known".into();
+    f.paths.source = f.paths.home.join("other-install");
+    assert!(titlebars::migrate(&f.paths, &mut f.hypr).is_err());
+    assert_eq!(
+        fs::read(f.paths.directory.join("owner.json")).unwrap(),
+        before
+    );
 }

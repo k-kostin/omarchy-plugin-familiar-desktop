@@ -7,7 +7,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'familiar-ui-setup-'));
 const home = path.join(tmp,'home'), root = path.join(home,'.config/omarchy/plugins/io.github.tcballard.familiar-desktop');
 const mock = path.join(tmp,'mock'), log = path.join(tmp,'calls');
 fs.mkdirSync(path.join(root,'.git'), {recursive:true}); fs.mkdirSync(mock);
-fs.copyFileSync('setup-in-app.sh',path.join(root,'setup-in-app.sh'));
+const officialLibrary = path.join(tmp,'system/titlebars.so');
+fs.writeFileSync(path.join(root,'setup-in-app.sh'),fs.readFileSync('setup-in-app.sh','utf8').replaceAll('/usr/lib/omarchy-hyprland-titlebars/titlebars.so',officialLibrary));
 fs.copyFileSync('bar-placement.sh',path.join(root,'bar-placement.sh'));
 function write(p, s) { fs.mkdirSync(path.dirname(p),{recursive:true}); fs.writeFileSync(p,s,{mode:0o755}); }
 const helper = `#!/bin/bash
@@ -67,6 +68,13 @@ try {
  assert.equal(stopped,3);
  assert.doesNotMatch(fs.readFileSync(log,'utf8'),/titlebars apply/);
  assert.equal(run('install').status,0);
+ // Official hosts install only Familiar's helper; controls opt-in happens in UI.
+ write(officialLibrary,'official');fs.writeFileSync(log,'');
+ fs.rmSync(path.join(root,'bin/hyprbars'),{recursive:true,force:true});
+ assert.equal(run('status').status,0);
+ r=run('install');assert.equal(r.status,0,r.stdout+r.stderr);
+ assert.doesNotMatch(fs.readFileSync(log,'utf8'),/download-titlebars|titlebars setup|titlebars apply/);
+ assert.equal(fs.readFileSync(officialLibrary,'utf8'),'official');
  console.log('In-app setup: fresh install, existing install, failure/retry, interrupted state, source refusal, corrupt bytes, and concurrency passed.');
 } finally { fs.rmSync(tmp,{recursive:true,force:true}); }
 

@@ -68,7 +68,8 @@ fs.writeFileSync(p,JSON.stringify(c));
   write(path.join(plugin,'.gitignore'),'/bin/\n');
   write(path.join(plugin,'release-binaries.sha256'),`${sha(helper('stable'))}  familiar-desktop-linux-x86_64\n${sha('stable library')}  ${asset}\n`);
   git('add','.');git('commit','-m','legacy without in-app setup');const legacy=git('rev-parse','HEAD');
-  write(path.join(plugin,'setup-in-app.sh'),fs.readFileSync('setup-in-app.sh','utf8'));
+  write(path.join(plugin,'setup-in-app.sh'),fs.readFileSync('setup-in-app.sh','utf8').replaceAll('/usr/lib/omarchy-hyprland-titlebars/titlebars.so',officialLibrary));
+  write(path.join(plugin,'backend/src/titlebars.rs'),'// Familiar official-titlebar handoff v1');
   git('add','.');git('commit','-m','stable fixture');const stable=git('rev-parse','HEAD');
   write(path.join(plugin,'feature.txt'),'first');git('add','.');git('commit','-m','first');const first=git('rev-parse','HEAD');
   write(path.join(plugin,'feature.txt'),'second');git('add','.');git('commit','-m','second');const second=git('rev-parse','HEAD');
@@ -85,15 +86,19 @@ fs.writeFileSync(p,JSON.stringify(c));
   write(shellPath,JSON.stringify(shell));
   const readShell=()=>JSON.parse(fs.readFileSync(shellPath));
   ok(status());
-  // Presence of the shared package must refuse install AND old-backend rollback
-  // before any helper, compositor, snapshot or checkout mutation.
+  // Official-package path supports source-matched install and rollback without
+  // executing any private-backend setup/disable command or touching preferences.
   write(officialLibrary,'official');write(env.CALLS,'');
-  for (const args of [[],['--rollback']]) {
-    const refused=run(a,args);
-    assert.notEqual(refused.status,0);assert.match(refused.stderr,/No source, binaries or configuration changed/);
-    assert.equal(git('rev-parse','HEAD'),stable);assert.equal(log(),'');
-    assert.ok(!fs.existsSync(path.join(state,'dev-rollback')));
-  }
+  ok(run(a)); assert.equal(git('rev-parse','HEAD'),first);ok(status());
+  assert.doesNotMatch(log(),/titlebars (setup|disable)/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home,'.config/omarchy/familiar-desktop-settings.json'))),settings);
+  ok(run(a,['--rollback']));assert.equal(git('rev-parse','HEAD'),stable);ok(status());
+  assert.doesNotMatch(log(),/titlebars (setup|disable)/);
+  assert.equal(fs.readFileSync(officialLibrary,'utf8'),'official');
+  // Pre-guard sources cannot be installed over an official-package session.
+  const unsafe=bundle(legacy,'unsafe');write(env.CALLS,'');
+  assert.notEqual(run(unsafe).status,0);assert.equal(git('rev-parse','HEAD'),stable);
+  assert.doesNotMatch(log(),/plugin disable/);
   fs.rmSync(officialLibrary);
   // Reject corrupted transport and source/receipt mismatch before disabling.
   write(env.CALLS,'');fs.appendFileSync(path.join(a,asset),'tamper');assert.notEqual(run(a).status,0);assert.doesNotMatch(log(),/plugin disable/);

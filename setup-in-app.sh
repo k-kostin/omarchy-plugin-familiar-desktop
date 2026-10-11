@@ -11,6 +11,7 @@ config="${XDG_CONFIG_HOME:-$HOME/.config}"
 abi='efb50993780079460b0cbed1363e2166a2de1d9f_aq_0.15_hu_0.14_hg_0.5_hc_0.1_hlg_0.6'
 library="$root/bin/hyprbars/$abi/hyprbars.so"
 helper="$root/bin/familiar-desktop"
+official_library=/usr/lib/omarchy-hyprland-titlebars/titlebars.so
 for tool in sha256sum awk jq flock timeout; do
   command -v "$tool" >/dev/null || { echo "Required system tool is missing: $tool. Update Omarchy and retry."; exit 1; }
 done
@@ -41,6 +42,10 @@ verified() {
 ready() {
   [[ ! -e "$state/setup-pending" && -x "$helper" ]] || return 1
   verified "$helper" familiar-desktop-linux-x86_64 || return 1
+  # Core owns the package and its ABI. The dock/setup need only our helper;
+  # the controls page provides an explicit handoff for an existing private hook.
+  [[ ! -f "$official_library" ]] || return 0
+  if jq -e '.backend == "omarchy"' "$config/omarchy/familiar-titlebars/owner.json" >/dev/null 2>&1; then return 0; fi
   verified "$library" "hyprbars-linux-x86_64-$abi.so" || return 1
   jq -e --arg source "$root" --arg library "$library" '.source == $source and .library == $library and .hookVersion == 2' "$config/omarchy/familiar-titlebars/owner.json" >/dev/null 2>&1 || return 1
   grep -qF -- '-- BEGIN Familiar Desktop title bars' "$config/hypr/looknfeel.lua" 2>/dev/null
@@ -82,7 +87,9 @@ familiar_prepare_bar_placement
 # A persisted incomplete marker survives shell restart and prevents partial activation.
 printf 'pending\n' > "$state/setup-pending"
 echo 'Checking your desktop…'
-timeout --foreground --kill-after=5 30 bash "$root/install-titlebars.sh" --check >"$log" 2>&1
+if [[ ! -f "$official_library" ]]; then
+  timeout --foreground --kill-after=5 30 bash "$root/install-titlebars.sh" --check >"$log" 2>&1
+fi
 # Only execute an existing backend after checking it against the reviewed source.
 if verified "$helper" familiar-desktop-linux-x86_64 && [[ -x "$helper" ]]; then
   timeout --foreground --kill-after=5 30 "$helper" desktop restore >"$log" 2>&1
@@ -90,6 +97,15 @@ if verified "$helper" familiar-desktop-linux-x86_64 && [[ -x "$helper" ]]; then
 fi
 echo 'Downloading and verifying the Familiar backend…'
 timeout --foreground --kill-after=5 240 bash "$root/install-backend.sh" >"$log" 2>&1
+verified "$helper" familiar-desktop-linux-x86_64
+if [[ -f "$official_library" ]]; then
+  # Selection is made on the controls page; setup never assumes style consent.
+  rm -f "$state/setup-pending"
+  ready
+  familiar_apply_bar_placement
+  echo 'Familiar is ready. Choose Use Omarchy controls in Window controls.'
+  exit 0
+fi
 echo 'Downloading and verifying window controls…'
 timeout --foreground --kill-after=5 240 bash "$root/install-titlebars.sh" >"$log" 2>&1
 verified "$helper" familiar-desktop-linux-x86_64

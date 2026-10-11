@@ -11,7 +11,8 @@ use std::{
 pub const BEGIN: &str = "-- BEGIN Familiar Desktop title bars";
 pub const END: &str = "-- END Familiar Desktop title bars";
 pub const OFFICIAL_LIBRARY: &str = "/usr/lib/omarchy-hyprland-titlebars/titlebars.so";
-const MIGRATION_REQUIRED: &str = "Omarchy's titlebar package is installed. Familiar's loader is paused; restart Hyprland to retire any previously loaded fork. Official-package integration is pending. Your settings are kept; the dock remains available.";
+// Familiar official-titlebar handoff v1
+const MIGRATION_REQUIRED: &str = "Omarchy's titlebar package is installed. Choose Use Omarchy controls to retire Familiar's loader. Core will manage controls on floating workspaces; your Mac/Windows preferences stay saved.";
 #[derive(Clone, Debug)]
 pub struct Args {
     pub operation: String,
@@ -59,7 +60,9 @@ impl Args {
             operation: argv.first().ok_or("Choose a title-bar operation")?.clone(),
             ..Self::default()
         };
-        if !["setup", "apply", "disable", "remove", "action"].contains(&a.operation.as_str()) {
+        if !["setup", "apply", "disable", "remove", "action", "migrate"]
+            .contains(&a.operation.as_str())
+        {
             return Err("Unknown title-bar operation".into());
         }
         let mut i = 1;
@@ -117,6 +120,7 @@ pub struct Paths {
     pub directory: PathBuf,
     pub config: PathBuf,
     pub official_library: PathBuf,
+    pub compositor_session: String,
 }
 impl Paths {
     pub fn system() -> Result<Self> {
@@ -135,6 +139,7 @@ impl Paths {
             directory: config.join("omarchy/familiar-titlebars"),
             config: config.join("hypr/looknfeel.lua"),
             official_library: PathBuf::from(OFFICIAL_LIBRARY),
+            compositor_session: env::var("HYPRLAND_INSTANCE_SIGNATURE").unwrap_or_default(),
         })
     }
 }
@@ -442,12 +447,82 @@ fn private_library(paths: &Paths, library: &Path) -> Result<PathBuf> {
     }
     Ok(path)
 }
+
+// Core owns loading, ABI validation, button lists, theme and workspace scope.
+// We never infer ownership from the shared plugin registration name.
+fn official_status(paths: &Paths, state: &Value, hypr: &mut impl Hypr) -> Result<Value> {
+    if !paths.official_library.is_file() {
+        return Ok(
+            json!({"state":"package-missing","backend":"omarchy","message":"Omarchy's titlebar package is missing. Update Omarchy through its normal package channel. Familiar will not reactivate its old loader."}),
+        );
+    }
+    if let Some(retired) = state["retiredSession"].as_str()
+        && (paths.compositor_session.is_empty() || retired == paths.compositor_session)
+    {
+        return Ok(
+            json!({"state":"restart-required","backend":"omarchy","message":"Familiar's old loader is retired. Log out and back in to finish switching to Omarchy controls. Saved styles are kept; the dock remains available."}),
+        );
+    }
+    if checked(hypr, &["eval", "assert(o and type(o.workspace_mode) == 'function', 'Omarchy floating-workspace support is missing')"]).is_err() {
+        return Ok(json!({"state":"core-required","backend":"omarchy","message":"The titlebar package is installed, but this session lacks Omarchy's floating-workspace support. Update Omarchy normally and log in again. Familiar will not load a competing backend."}));
+    }
+    Ok(
+        json!({"state":"managed","backend":"omarchy","message":"Omarchy manages titlebars on floating workspaces (Super+L). Familiar's saved styles, size and exclusions are inactive. Minimise remains available from the dock."}),
+    )
+}
+
+/// Explicit handoff: retire our generated loader, without loading, unloading or
+/// reloading the compositor. Existing private mappings retire at the next login.
+/// Journal first: interruption must never let reconciliation recreate the fork.
+pub fn migrate(paths: &Paths, hypr: &mut impl Hypr) -> Result<Value> {
+    if !paths.official_library.is_file() {
+        return Err("Install Omarchy's titlebar package through your normal Omarchy update before switching controls.".into());
+    }
+    let state_file = paths.directory.join("owner.json");
+    let state = read_json(&state_file)?;
+    let before = crate::config_file::read(&paths.config)?;
+    owned_config(paths, &state, &before)?;
+    let already_official = state["backend"] == "omarchy";
+    let had_private = !already_official && state.as_object().is_some_and(|o| !o.is_empty());
+    if had_private && paths.compositor_session.is_empty() {
+        return Err("Switch controls from inside your Hyprland session so Familiar can verify the required restart.".into());
+    }
+    // Retain legacy ownership fields and the inert include hook for rollback
+    // to versions with the official-package guard. Never change user settings.
+    let mut next = state;
+    next["backend"] = json!("omarchy");
+    next["source"] = json!(paths.source);
+    next["config"] = json!(paths.config);
+    if had_private {
+        next["retiredSession"] = json!(paths.compositor_session);
+    }
+    next["migrationPending"] = json!(true);
+    atomic(
+        &state_file,
+        &serde_json::to_vec(&next).map_err(|e| e.to_string())?,
+    )?;
+    atomic(
+        &paths.directory.join("titlebars.lua"),
+        b"-- Titlebars are managed by Omarchy. Familiar does not load or configure a backend.\n",
+    )?;
+    next["migrationPending"] = json!(false);
+    atomic(
+        &state_file,
+        &serde_json::to_vec(&next).map_err(|e| e.to_string())?,
+    )?;
+    official_status(paths, &next, hypr)
+}
 pub fn setup(args: &Args, paths: &Paths, hypr: &mut impl Hypr) -> Result<Value> {
     if args.install_dependency {
         return Err("Familiar no longer installs a competing hyprpm backend. Use the in-app setup; official-package migration is tracked in issue #74.".into());
     }
     let state_file = paths.directory.join("owner.json");
     let state = read_json(&state_file)?;
+    if state["backend"] == "omarchy" {
+        return Err(
+            "Omarchy manages these controls. Familiar will not recreate a private loader.".into(),
+        );
+    }
     if paths.official_library.exists() {
         return Err(MIGRATION_REQUIRED.into());
     }
@@ -530,11 +605,23 @@ pub fn setup(args: &Args, paths: &Paths, hypr: &mut impl Hypr) -> Result<Value> 
 pub fn reconcile(args: &Args, paths: &Paths, hypr: &mut impl Hypr) -> Result<Value> {
     let state_file = paths.directory.join("owner.json");
     let mut state = read_json(&state_file)?;
+    if state["backend"] == "omarchy" {
+        let text = crate::config_file::read(&paths.config)?;
+        owned_config(paths, &state, &text)?;
+        if state["migrationPending"] == true {
+            return Ok(
+                json!({"state":"migration-required","backend":"omarchy","message":"The switch to Omarchy controls was interrupted. Choose Use Omarchy controls again to finish retiring Familiar's hook."}),
+            );
+        }
+        return official_status(paths, &state, hypr);
+    }
     if state.as_object().is_some_and(|o| o.is_empty()) {
         // Fresh installations must not offer private-backend setup on a Core
         // floating-workspace host. Presence is not proof of a loaded ABI/owner.
         if paths.official_library.exists() {
-            return Ok(json!({"state":"blocked","message":MIGRATION_REQUIRED}));
+            return Ok(
+                json!({"state":"migration-required","backend":"omarchy","message":MIGRATION_REQUIRED}),
+            );
         }
         return Ok(
             json!({"state":"setup-required","message":"Build the Rust helper and run title-bar setup from Familiar's settings."}),
@@ -565,7 +652,9 @@ pub fn reconcile(args: &Args, paths: &Paths, hypr: &mut impl Hypr) -> Result<Val
             &generated,
             b"-- Familiar controls paused for Omarchy's titlebar package.\n",
         )?;
-        return Ok(json!({"state":"blocked","message":MIGRATION_REQUIRED}));
+        return Ok(
+            json!({"state":"migration-required","backend":"omarchy","message":MIGRATION_REQUIRED}),
+        );
     }
     let mut active = false;
     let content = if args.operation == "disable" {
@@ -664,6 +753,19 @@ pub fn remove(paths: &Paths, hypr: &mut impl Hypr) -> Result<Value> {
     if state.as_object().is_some_and(|o| o.is_empty()) {
         return Ok(json!({"state":"removed","message":"No Familiar title-bar hook is installed."}));
     }
+    if state["backend"] == "omarchy" {
+        crate::config_file::replace(
+            &paths.config,
+            &before,
+            &after,
+            &paths.directory.join("backups"),
+        )?;
+        // Preserve the delegation receipt: reinstall/re-enable must not silently
+        // resurrect the private backend if the system package disappears.
+        return Ok(
+            json!({"state":"removed","message":"Familiar's hook is removed. Omarchy's package, configuration and saved preferences were left intact."}),
+        );
+    }
     let library = state["library"]
         .as_str()
         .ok_or("Invalid title-bar ownership state")?;
@@ -748,6 +850,7 @@ pub fn execute(argv: &[String]) -> Result<Value> {
     let _lock = common::lock(&paths.directory.join("lock"))?;
     match args.operation.as_str() {
         "setup" => setup(&args, &paths, &mut hypr),
+        "migrate" => migrate(&paths, &mut hypr),
         "remove" => remove(&paths, &mut hypr),
         _ => reconcile(&args, &paths, &mut hypr),
     }

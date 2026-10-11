@@ -13,15 +13,20 @@ library="$plugin/bin/hyprbars/$abi/hyprbars.so"
 receipt="$state/dev-build.json"
 mode="${1:-install}"
 [[ ( "$mode" == install && $# -le 1 ) || ( "$mode" == --rollback && $# -le 2 ) ]] || { echo 'Usage: bash install-dev.sh [--rollback [SNAPSHOT]]'; exit 2; }
-if [[ -e /usr/lib/omarchy-hyprland-titlebars/titlebars.so ]]; then
-  echo "Omarchy's titlebar package is installed. This development installer cannot migrate it or safely restore an older bundled backend. No source, binaries or configuration changed; official-package migration is tracked in #74." >&2
-  exit 1
-fi
+official_library=/usr/lib/omarchy-hyprland-titlebars/titlebars.so
+official=false
+[[ ! -f "$official_library" ]] || official=true
+# v0.1.5 is the audited rollback baseline with a guarded private loader.
+# Newer sources opt in through the handoff contract marker.
+official_safe_source() {
+  [[ "$1" == 439f97480bb0803f32137dcb700fbb939dc959ff ]] ||
+    git -C "$plugin" show "$1:backend/src/titlebars.rs" 2>/dev/null | grep -qF '// Familiar official-titlebar handoff v1'
+}
 for tool in git jq sha256sum flock omarchy hyprctl install; do
   command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }
 done
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo 'Requires Linux x86_64.' >&2; exit 1; }
-[[ "$(hyprctl version | sed -n 's/^Version ABI string: //p')" == "$abi" ]] || { echo 'Unsupported Hyprland ABI; nothing changed.' >&2; exit 1; }
+[[ "$official" == true || "$(hyprctl version | sed -n 's/^Version ABI string: //p')" == "$abi" ]] || { echo 'Unsupported Hyprland ABI; nothing changed.' >&2; exit 1; }
 [[ -d "$plugin/.git" && ! -L "$plugin" ]] || { echo 'Install and finish stable Familiar setup first.' >&2; exit 1; }
 [[ -z "$(git -C "$plugin" status --porcelain --untracked-files=all)" ]] || { echo 'Preserve local source changes before testing.' >&2; exit 1; }
 while IFS= read -r ignored; do
@@ -34,6 +39,24 @@ for file in "$plugin/bin/familiar-desktop" "$library"; do
 done
 mkdir -p "$state/dev-snapshots"
 installed_ready() {
+  if [[ "$official" == true ]]; then
+    official_safe_source "$(git -C "$plugin" rev-parse HEAD)" || { echo 'This source predates safe official-titlebar coexistence; update Familiar first.' >&2; return 1; }
+    local name file expected actual
+    for name in familiar-desktop-linux-x86_64 "$asset"; do
+      file="$plugin/bin/familiar-desktop"
+      [[ "$name" != "$asset" ]] || file="$library"
+      if [[ -e "$receipt" ]]; then
+        [[ -f "$receipt" && ! -L "$receipt" ]] || return 1
+        expected="$(jq -er --arg source "$plugin" --arg sha "$(git -C "$plugin" rev-parse HEAD)" --arg name "$name" 'select(.schemaVersion == 1 and .channel == "development" and .sourceDirectory == $source and .commit == $sha) | .assets[$name]' "$receipt")" || return 1
+      else
+        expected="$(git -C "$plugin" show HEAD:release-binaries.sha256 | awk -v name="$name" '$2 == name {print $1}')" || return 1
+      fi
+      [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || return 1
+      actual="$(sha256sum "$file")"
+      [[ "${actual%% *}" == "$expected" ]] || return 1
+    done
+    return 0
+  fi
   if [[ -f "$plugin/setup-in-app.sh" && ! -L "$plugin/setup-in-app.sh" ]]; then
     bash "$plugin/setup-in-app.sh" status
     return
@@ -104,6 +127,9 @@ else
   git -C "$plugin" cat-file -e "$target^{commit}"
   bytes="$snapshot"
 fi
+if [[ "$official" == true ]]; then
+  official_safe_source "$target" || { echo 'Rollback/source lacks the official-titlebar guard; nothing was activated. Keep Omarchy installed and use a compatible Familiar build.' >&2; exit 1; }
+fi
 printf 'Installing source %s\nRollback snapshot: %s\n' "$target" "$snapshot"
 trap 'echo "Installation did not complete. Recover with: bash $bundle/install-dev.sh --rollback $snapshot" >&2' ERR
 # Reset taskbar placement with this bundle's verified helper, before replacing
@@ -171,7 +197,7 @@ restore_placement() {
 # Do not run unverified partial binaries when recovering a failed install.
 if [[ "$mode" == install ]]; then
   "$plugin/bin/familiar-desktop" desktop restore
-  "$plugin/bin/familiar-desktop" titlebars disable
+  if [[ "$official" != true ]]; then "$plugin/bin/familiar-desktop" titlebars disable; fi
 else
   omarchy plugin disable "$plugin_id"
   # The helper derives ownership from its executable path. Restore the verified
@@ -179,7 +205,7 @@ else
   install -m 755 "$snapshot/familiar-desktop-linux-x86_64" "$plugin/bin/.familiar-desktop.dev"
   mv "$plugin/bin/.familiar-desktop.dev" "$plugin/bin/familiar-desktop"
   "$plugin/bin/familiar-desktop" desktop restore
-  "$plugin/bin/familiar-desktop" titlebars disable
+  if [[ "$official" != true ]]; then "$plugin/bin/familiar-desktop" titlebars disable; fi
 fi
 omarchy plugin disable "$plugin_id"
 git -C "$plugin" checkout --detach "$target"
@@ -199,7 +225,9 @@ else
 fi
 # --enable is deliberately omitted: it overwrites dockEnabled, titlebarsEnabled
 # and titlebarMode. The restarted controller reapplies the user's saved choices.
-"$plugin/bin/familiar-desktop" titlebars setup --library "$library"
+if [[ "$official" != true ]]; then
+  "$plugin/bin/familiar-desktop" titlebars setup --library "$library"
+fi
 flock -u 9
 installed_ready
 omarchy plugin enable "$plugin_id"

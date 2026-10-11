@@ -15,6 +15,7 @@ ColumnLayout {
     signal closeRequested
     signal copyRequested(string text)
     enabled: service !== null
+    readonly property bool officialTitlebars: !!service && !!service.titlebarsManagedByOmarchy
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: parent.top
@@ -139,7 +140,7 @@ ColumnLayout {
             }]
         delegate: ColumnLayout {
             id: sizeRow
-            visible: modelData.key === "dockSize" ? content.navigation.shows("dock", "appearance") : content.navigation.shows("windows", "titlebars")
+            visible: modelData.key === "dockSize" ? content.navigation.shows("dock", "appearance") : content.navigation.shows("windows", "titlebars") && !content.officialTitlebars
             required property var modelData
             Layout.fillWidth: true
             Text {
@@ -289,12 +290,13 @@ ColumnLayout {
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
             textFormat: Text.PlainText
-            text: "Title bars with close, minimise and maximise. Restore minimised windows from the dock."
+            text: content.officialTitlebars ? "Use Omarchy’s controls on floating workspaces. Omarchy owns their appearance and buttons. Your Familiar styles stay saved; minimise is available from the dock." : "Title bars with close, minimise and maximise. Restore minimised windows from the dock."
             font.family: Style.font.family
             font.pixelSize: 11
             color: Commons.Color.popups.text
         }
         RowLayout {
+            visible: !content.officialTitlebars
             Layout.fillWidth: true
             Repeater {
                 model: [{
@@ -347,6 +349,7 @@ ColumnLayout {
             color: Commons.Color.muted
         }
         Rectangle {
+            visible: !content.officialTitlebars || content.service.titlebarState === "migration-required" || content.service.titlebarState === "failed"
             Layout.fillWidth: true
             height: 32
             radius: 6
@@ -355,7 +358,7 @@ ColumnLayout {
             border.color: Commons.Color.popups.border
             Text {
                 anchors.centerIn: parent
-                text: "Set up or repair window controls"
+                text: content.officialTitlebars ? "Use Omarchy controls" : "Set up or repair window controls"
                 font.family: Style.font.family
                 font.pixelSize: 11
                 color: Commons.Color.popups.text
@@ -365,8 +368,13 @@ ColumnLayout {
                 objectName: "titlebar-repair"
                 anchors.fill: parent
                 hoverEnabled: true
+                enabled: content.service && !content.service.titlebarBusy
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
+                    if (content.officialTitlebars) {
+                        content.service.useOmarchyTitlebars();
+                        return;
+                    }
                     if (content.service && content.service.setup) {
                         content.closeRequested();
                         content.service.setup.repair(content.service.titlebarStyle);
@@ -375,7 +383,7 @@ ColumnLayout {
             }
         }
         PreferenceToggle {
-            visible: content.service.titlebarMode !== "off"
+            visible: !content.officialTitlebars && content.service.titlebarMode !== "off"
             objectName: "skipBrowserTitlebars"
             Layout.fillWidth: true
             label: "Skip Chrome and Chromium title bars"
@@ -383,7 +391,7 @@ ColumnLayout {
             onToggled: function(value) { content.service.setPreference("skipBrowserTitlebars", value); }
         }
         Text {
-            visible: content.service.titlebarMode !== "off"
+            visible: !content.officialTitlebars && content.service.titlebarMode !== "off"
             text: "Skip other apps with their own title bars (window classes, comma-separated)"
             Layout.fillWidth: true
             wrapMode: Text.WordWrap
@@ -392,7 +400,7 @@ ColumnLayout {
             color: Commons.Color.muted
         }
         Rectangle {
-            visible: content.service.titlebarMode !== "off"
+            visible: !content.officialTitlebars && content.service.titlebarMode !== "off"
             Layout.fillWidth: true
             height: 32
             radius: 6
