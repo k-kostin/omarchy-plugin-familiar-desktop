@@ -189,5 +189,12 @@ fs.writeFileSync(p,JSON.stringify(c));
   assert.ok(!fs.existsSync(receiptPath));assert.equal(fs.readFileSync(path.join(state,'setup-pending'),'utf8'),'original pending');
   assert.equal(status().status,3);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home,'.config/omarchy/familiar-desktop-settings.json'))),afterSetupSettings);
+  // Interrupt after staging the backend but before the library/receipt. Rollback
+  // verifies partial bytes without executing them and permits another initial try.
+  write(path.join(tools,'install'),'#!/bin/bash\nif [[ "$FAIL_STAGE" == 1 && "$*" == *hyprbars-linux* ]]; then exit 7; fi\nexec /usr/bin/install "$@"\n');
+  write(env.CALLS,'');assert.notEqual(run(a,['--initial'],{FAIL_STAGE:'1'}).status,0);
+  assert.ok(!fs.existsSync(receiptPath));assert.equal(log(),'');
+  ok(run(a,['--rollback']));assert.equal(log(),'');assert.equal(git('rev-parse','HEAD'),stable);
+  ok(run(a,['--initial']));ok(run(a,['--rollback']));
   console.log(`Development lifecycle (${architecture}) passed: integrity, clean source, stable/dev updates, initial setup, receipt binding, rollback, failed setup recovery and locking.`);
 } finally {fs.rmSync(temp,{recursive:true,force:true});}

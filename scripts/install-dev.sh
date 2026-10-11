@@ -231,6 +231,7 @@ if [[ "$mode" == --rollback ]] && jq -e '.initial == true' "$snapshot/snapshot.j
   fi
   git -C "$plugin" checkout --detach "$target"
   rm -f -- "$plugin/bin/familiar-desktop" "$library" "$receipt"
+  rmdir -- "$(dirname "$library")" "$plugin/bin/hyprbars" 2>/dev/null || true
   for marker in setup-pending bar-placement-pending; do
     if [[ -f "$snapshot/$marker" ]]; then cp "$snapshot/$marker" "$state/$marker"; else rm -f -- "$state/$marker"; fi
   done
