@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::{
     io::Read,
     os::fd::AsRawFd,
+    os::unix::process::CommandExt,
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
@@ -12,6 +13,20 @@ const MAX_BYTES: usize = 16 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(2);
 
 fn receive(command: &mut Command, limit: usize, timeout: Duration) -> Result<String> {
+    let parent = std::process::id() as libc::pid_t;
+    // A shell reload may terminate this helper while a hostile owner is still
+    // streaming. Do not leave wl-paste orphaned when its supervisor disappears.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() != parent {
+                return Err(std::io::Error::other("Clipboard supervisor exited"));
+            }
+            Ok(())
+        });
+    }
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
