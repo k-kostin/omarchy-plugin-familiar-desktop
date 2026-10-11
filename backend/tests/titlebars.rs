@@ -725,3 +725,16 @@ fn official_package_pauses_loader_without_touching_shared_backend_or_settings() 
         "official"
     );
 }
+
+#[test]
+fn fresh_official_host_does_not_offer_competing_setup() {
+    let mut f = Fixture::new();
+    fs::create_dir_all(f.paths.official_library.parent().unwrap()).unwrap();
+    fs::write(&f.paths.official_library, "official v0.2.0").unwrap();
+    let original = fs::read_to_string(&f.paths.config).unwrap();
+    assert_eq!(f.apply().unwrap()["state"], "blocked");
+    assert!(f.setup().is_err());
+    assert!(f.hypr.calls.is_empty());
+    assert!(!f.paths.directory.join("owner.json").exists());
+    assert_eq!(fs::read_to_string(&f.paths.config).unwrap(), original);
+}
