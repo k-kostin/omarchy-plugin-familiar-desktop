@@ -1,6 +1,12 @@
 # Official titlebar migration — issue #74
 
 Status: preparatory coexistence safeguards, **not a completed migration**.
+Update 11 October: Core #14482 and package #957 have now merged; v0.2.0
+comes from `omacom/omarchy-hyprland-titlebars`. The observations below dated
+10 October are historical, not the current merge state. See
+[v0.1.6 development](V0.1.6-DEVELOPMENT.md) for the new contract review,
+fresh-install safeguard and outstanding migration/acceptance requirements.
+
 Rechecked 10 October 2026. Keep #74 open until the migration and live acceptance
 criteria are met. Tom approved including the safeguards with the Windows taskbar
 and dock opacity in the v0.1.3 integration candidate on 8 October 2026. The full
