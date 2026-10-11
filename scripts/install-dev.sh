@@ -7,12 +7,16 @@ bundle="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 plugin_id='io.github.tcballard.familiar-desktop'
 plugin="$HOME/.config/omarchy/plugins/$plugin_id"
 state="${XDG_STATE_HOME:-$HOME/.local/state}/familiar-desktop"
-abi='efb50993780079460b0cbed1363e2166a2de1d9f_aq_0.15_hu_0.14_hg_0.5_hc_0.1_hlg_0.6'
-asset="hyprbars-linux-x86_64-$abi.so"
+architecture="$(uname -m)"
+abi="$(hyprctl version | sed -n 's/^Version ABI string: //p')"
+backend_asset="familiar-desktop-linux-$architecture"
+asset="hyprbars-linux-$architecture-$abi.so"
 library="$plugin/bin/hyprbars/$abi/hyprbars.so"
 receipt="$state/dev-build.json"
 mode="${1:-install}"
-[[ ( "$mode" == install && $# -le 1 ) || ( "$mode" == --rollback && $# -le 2 ) ]] || { echo 'Usage: bash install-dev.sh [--rollback [SNAPSHOT]]'; exit 2; }
+initial=false
+if [[ "$mode" == --initial && $# == 1 ]]; then initial=true; mode=install; fi
+[[ ( "$mode" == install && $# -le 1 ) || ( "$mode" == --rollback && $# -le 2 ) ]] || { echo 'Usage: bash install-dev.sh [--initial | --rollback [SNAPSHOT]]'; exit 2; }
 if [[ -e /usr/lib/omarchy-hyprland-titlebars/titlebars.so ]]; then
   echo "Omarchy's titlebar package is installed. This development installer cannot migrate it or safely restore an older bundled backend. No source, binaries or configuration changed; official-package migration is tracked in #74." >&2
   exit 1
@@ -20,8 +24,7 @@ fi
 for tool in git jq sha256sum flock omarchy hyprctl install; do
   command -v "$tool" >/dev/null || { echo "Missing $tool" >&2; exit 1; }
 done
-[[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || { echo 'Requires Linux x86_64.' >&2; exit 1; }
-[[ "$(hyprctl version | sed -n 's/^Version ABI string: //p')" == "$abi" ]] || { echo 'Unsupported Hyprland ABI; nothing changed.' >&2; exit 1; }
+[[ "$(uname -s)" == Linux && ( "$architecture" == x86_64 || "$architecture" == aarch64 ) && "$abi" =~ ^[a-zA-Z0-9_.-]+$ ]] || { echo 'Unsupported architecture or Hyprland ABI; nothing changed.' >&2; exit 1; }
 [[ -d "$plugin/.git" && ! -L "$plugin" ]] || { echo 'Install and finish stable Familiar setup first.' >&2; exit 1; }
 [[ -z "$(git -C "$plugin" status --porcelain --untracked-files=all)" ]] || { echo 'Preserve local source changes before testing.' >&2; exit 1; }
 while IFS= read -r ignored; do
@@ -29,9 +32,17 @@ while IFS= read -r ignored; do
     *) echo "Unexpected ignored file: $ignored" >&2; exit 1;;
   esac
 done < <(git -C "$plugin" ls-files --others --ignored --exclude-standard)
-for file in "$plugin/bin/familiar-desktop" "$library"; do
-  [[ -f "$file" && ! -L "$file" ]] || { echo "Missing or symlinked installed binary: $file" >&2; exit 1; }
-done
+if [[ "$initial" == true ]]; then
+  config="${XDG_CONFIG_HOME:-$HOME/.config}"
+  for file in "$plugin/bin/familiar-desktop" "$plugin/bin/hyprbars" "$receipt" "$config/omarchy/familiar-titlebars/owner.json"; do
+    [[ ! -e "$file" && ! -L "$file" ]] || { echo 'Initial development setup requires an installation without native binaries or titlebar ownership.' >&2; exit 1; }
+  done
+  ! grep -qF -- '-- BEGIN Familiar Desktop title bars' "$config/hypr/looknfeel.lua" || { echo 'Existing titlebar hook; initial setup refused.' >&2; exit 1; }
+elif [[ "$mode" == install ]]; then
+  for file in "$plugin/bin/familiar-desktop" "$library"; do
+    [[ -f "$file" && ! -L "$file" ]] || { echo "Missing or symlinked installed binary: $file" >&2; exit 1; }
+  done
+fi
 mkdir -p "$state/dev-snapshots"
 installed_ready() {
   if [[ -f "$plugin/setup-in-app.sh" && ! -L "$plugin/setup-in-app.sh" ]]; then
@@ -43,7 +54,7 @@ installed_ready() {
   [[ ! -e "$receipt" && ! -L "$receipt" && ! -e "$state/setup-pending" ]] || return 1
   local pins name file expected actual
   pins="$(git -C "$plugin" show HEAD:release-binaries.sha256)" || { echo 'Existing source has no reviewed binary pins; stop for repair.' >&2; return 1; }
-  for name in familiar-desktop-linux-x86_64 "$asset"; do
+  for name in "$backend_asset" "$asset"; do
     file="$plugin/bin/familiar-desktop"
     [[ "$name" != "$asset" ]] || file="$library"
     expected="$(awk -v name="$name" '$2 == name {print $1}' <<< "$pins")"
@@ -57,7 +68,7 @@ installed_ready() {
   grep -qF -- '-- BEGIN Familiar Desktop title bars' "$config/hypr/looknfeel.lua" || return 1
   echo 'Verified existing installation without in-app setup.'
 }
-if [[ "$mode" == install ]]; then
+if [[ "$mode" == install && "$initial" == false ]]; then
   # Existing install must be ready; this checks its stable pins or previous dev receipt.
   installed_ready
 fi
@@ -66,7 +77,7 @@ flock -n 9 || { echo 'Another setup operation is running.' >&2; exit 1; }
 current="$(git -C "$plugin" rev-parse HEAD)"
 verify_assets() {
   local dir="$1" metadata="$2" name actual expected
-  for name in familiar-desktop-linux-x86_64 "$asset"; do
+  for name in "$backend_asset" "$asset"; do
     [[ -f "$dir/$name" && ! -L "$dir/$name" ]] || return 1
     expected="$(jq -er --arg name "$name" '.assets[$name]' "$metadata")"
     [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || return 1
@@ -79,14 +90,20 @@ if [[ "$mode" == install ]]; then
   (cd "$bundle" && sha256sum --check --strict SHA256SUMS)
   jq -e --arg sha "$source_sha" 'select(.schemaVersion == 1 and .channel == "development" and .commit == $sha and .repository == "tcballard/omarchy-plugin-familiar-desktop")' "$bundle/DEV-BUILD.json" >/dev/null
   verify_assets "$bundle" "$bundle/DEV-BUILD.json"
-  git -C "$plugin" fetch --no-tags https://github.com/tcballard/omarchy-plugin-familiar-desktop.git "$source_sha"
+  git -C "$plugin" fetch --no-tags "${FAMILIAR_SOURCE_REPOSITORY:-https://github.com/tcballard/omarchy-plugin-familiar-desktop.git}" "$source_sha"
   [[ "$(git -C "$plugin" rev-parse 'FETCH_HEAD^{commit}')" == "$source_sha" ]] || exit 1
   snapshot="$(mktemp -d "$state/dev-snapshots/build-XXXXXXXX")"
-  cp "$plugin/bin/familiar-desktop" "$snapshot/familiar-desktop-linux-x86_64"
-  cp "$library" "$snapshot/$asset"
+  if [[ "$initial" == false ]]; then
+    cp "$plugin/bin/familiar-desktop" "$snapshot/$backend_asset"
+    cp "$library" "$snapshot/$asset"
+  else
+    for marker in setup-pending bar-placement-pending; do
+      [[ ! -e "$state/$marker" ]] || cp "$state/$marker" "$snapshot/$marker"
+    done
+  fi
   [[ ! -e "$receipt" ]] || cp "$receipt" "$snapshot/dev-build.json"
-  jq -n --arg previous "$current" --arg target "$source_sha" --arg source "$plugin" \
-    '{previous:$previous,target:$target,source:$source}' > "$snapshot/snapshot.json"
+  jq -n --arg previous "$current" --arg target "$source_sha" --arg source "$plugin" --argjson initial "$initial" \
+    '{previous:$previous,target:$target,source:$source,initial:$initial}' > "$snapshot/snapshot.json"
   (cd "$snapshot" && sha256sum ./* > SHA256SUMS)
   printf '%s\n' "$snapshot" > "$state/dev-rollback.new"
   mv "$state/dev-rollback.new" "$state/dev-rollback"
@@ -97,7 +114,9 @@ else
   snapshot="$(realpath -e -- "$snapshot")"
   [[ "$snapshot" == "$state/dev-snapshots/"* && -d "$snapshot" && ! -L "$snapshot" ]] || { echo 'Unknown rollback snapshot.' >&2; exit 1; }
   (cd "$snapshot" && sha256sum --check --strict SHA256SUMS)
-  [[ -f "$snapshot/familiar-desktop-linux-x86_64" && ! -L "$snapshot/familiar-desktop-linux-x86_64" && -f "$snapshot/$asset" && ! -L "$snapshot/$asset" ]] || exit 1
+  if ! jq -e '.initial == true' "$snapshot/snapshot.json" >/dev/null; then
+    [[ -f "$snapshot/$backend_asset" && ! -L "$snapshot/$backend_asset" && -f "$snapshot/$asset" && ! -L "$snapshot/$asset" ]] || exit 1
+  fi
   jq -e --arg source "$plugin" --arg current "$current" 'select(.source == $source and (.target == $current or .previous == $current))' "$snapshot/snapshot.json" >/dev/null
   target="$(jq -er '.previous' "$snapshot/snapshot.json")"
   [[ "$target" =~ ^[0-9a-f]{40}$ ]] || exit 1
@@ -113,7 +132,7 @@ if [[ -e "$HOME/.local/state/familiar-desktop/taskbar/placement.json" || -L "$HO
   (cd "$bundle" && sha256sum --check --strict SHA256SUMS)
   verify_assets "$bundle" "$bundle/DEV-BUILD.json"
   taskbar_helper="$(mktemp "$state/taskbar-helper.XXXXXXXX")"
-  install -m 755 "$bundle/familiar-desktop-linux-x86_64" "$taskbar_helper"
+  install -m 755 "$bundle/$backend_asset" "$taskbar_helper"
   taskbar_status=0
   "$taskbar_helper" taskbar reset || taskbar_status=$?
   rm -f "$taskbar_helper"
@@ -168,6 +187,57 @@ restore_placement() {
   mv "$after" "$shell_config"
   rm -f "$before"
 }
+# ARM users cannot finish stable x86_64 setup first. Stage a source-bound local
+# bundle explicitly, then let the normal setup screen apply the chosen style.
+if [[ "$initial" == true ]]; then
+  printf 'pending\n' > "$state/setup-pending"
+  git -C "$plugin" checkout --detach "$target"
+  [[ "$(git -C "$plugin" rev-parse HEAD)" == "$target" ]]
+  mkdir -p "$(dirname "$library")"
+  install -m 755 "$bytes/$backend_asset" "$plugin/bin/familiar-desktop"
+  install -m 644 "$bytes/$asset" "$library"
+  jq --arg source "$plugin" '. + {sourceDirectory:$source}' "$bundle/DEV-BUILD.json" > "$receipt.new"
+  mv "$receipt.new" "$receipt"
+  flock -u 9
+  echo 'Development binaries staged. Open Familiar and start setup to choose window controls.'
+  printf 'Rollback: bash %q --rollback %q\n' "$bundle/install-dev.sh" "$snapshot"
+  exit 0
+fi
+if [[ "$mode" == --rollback ]] && jq -e '.initial == true' "$snapshot/snapshot.json" >/dev/null; then
+  config="${XDG_CONFIG_HOME:-$HOME/.config}"
+  metadata="$receipt"
+  if [[ ! -e "$receipt" ]]; then
+    # An interrupted staging operation has never activated native controls.
+    [[ ! -e "$config/omarchy/familiar-titlebars/owner.json" ]] || exit 1
+    ! grep -qF -- '-- BEGIN Familiar Desktop title bars' "$config/hypr/looknfeel.lua" || exit 1
+    (cd "$bundle" && sha256sum --check --strict SHA256SUMS)
+    verify_assets "$bundle" "$bundle/DEV-BUILD.json"
+    metadata="$bundle/DEV-BUILD.json"
+  else
+    jq -e --arg source "$plugin" --arg sha "$current" 'select(.sourceDirectory == $source and .commit == $sha and .channel == "development")' "$receipt" >/dev/null
+  fi
+  # Validate current bytes/source before running the helper that removes its hook.
+  for name in "$backend_asset" "$asset"; do
+    file="$plugin/bin/familiar-desktop"; [[ "$name" != "$asset" ]] || file="$library"
+    if [[ ! -e "$file" && ! -L "$file" && ! -e "$receipt" ]]; then continue; fi
+    [[ -f "$file" && ! -L "$file" ]] || exit 1
+    expected="$(jq -er --arg name "$name" '.assets[$name]' "$metadata")"
+    actual="$(sha256sum "$file")"
+    [[ "$expected" =~ ^[0-9a-f]{64}$ && "${actual%% *}" == "$expected" ]] || { echo 'Installed development bytes are corrupt; reinstall the matching bundle before rollback.' >&2; exit 1; }
+  done
+  if [[ -e "$receipt" ]]; then
+    "$plugin/bin/familiar-desktop" desktop restore
+    "$plugin/bin/familiar-desktop" titlebars remove
+  fi
+  git -C "$plugin" checkout --detach "$target"
+  rm -f -- "$plugin/bin/familiar-desktop" "$library" "$receipt"
+  for marker in setup-pending bar-placement-pending; do
+    if [[ -f "$snapshot/$marker" ]]; then cp "$snapshot/$marker" "$state/$marker"; else rm -f -- "$state/$marker"; fi
+  done
+  restore_placement
+  echo 'Initial development setup rolled back; personal settings retained.'
+  exit 0
+fi
 # Do not run unverified partial binaries when recovering a failed install.
 if [[ "$mode" == install ]]; then
   "$plugin/bin/familiar-desktop" desktop restore
@@ -176,7 +246,7 @@ else
   omarchy plugin disable "$plugin_id"
   # The helper derives ownership from its executable path. Restore the verified
   # previous helper at that path before using it to recover a partial install.
-  install -m 755 "$snapshot/familiar-desktop-linux-x86_64" "$plugin/bin/.familiar-desktop.dev"
+  install -m 755 "$snapshot/$backend_asset" "$plugin/bin/.familiar-desktop.dev"
   mv "$plugin/bin/.familiar-desktop.dev" "$plugin/bin/familiar-desktop"
   "$plugin/bin/familiar-desktop" desktop restore
   "$plugin/bin/familiar-desktop" titlebars disable
@@ -184,7 +254,7 @@ fi
 omarchy plugin disable "$plugin_id"
 git -C "$plugin" checkout --detach "$target"
 [[ "$(git -C "$plugin" rev-parse HEAD)" == "$target" ]]
-install -m 755 "$bytes/familiar-desktop-linux-x86_64" "$plugin/bin/.familiar-desktop.dev"
+install -m 755 "$bytes/$backend_asset" "$plugin/bin/.familiar-desktop.dev"
 mv "$plugin/bin/.familiar-desktop.dev" "$plugin/bin/familiar-desktop"
 install -m 644 "$bytes/$asset" "$library.dev"
 mv "$library.dev" "$library"
