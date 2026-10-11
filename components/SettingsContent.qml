@@ -399,7 +399,7 @@ ColumnLayout {
             color: "transparent"
             border.width: 1
             border.color: titlebarExclusionsInput.activeFocus ? Commons.Color.accent : Commons.Color.popups.border
-            TextInput {
+            SafeTextInput {
                 id: titlebarExclusionsInput
                 anchors.fill: parent
                 anchors.margins: 7
