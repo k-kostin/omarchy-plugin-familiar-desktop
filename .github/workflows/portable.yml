@@ -6,7 +6,8 @@ on:
 permissions:
   contents: read
 jobs:
-  test:
+  platforms:
+    name: Portable (${{ matrix.architecture }})
     strategy:
       fail-fast: false
       matrix:
@@ -48,3 +49,13 @@ jobs:
           name: familiar-setup-preview-${{ matrix.architecture }}
           path: /tmp/familiar-setup-preview.png
           if-no-files-found: error
+  # Keep the existing required status-check context for stable-main rulesets.
+  test:
+    needs: platforms
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require both architectures to pass
+        env:
+          PLATFORM_RESULT: ${{ needs.platforms.result }}
+        run: test "$PLATFORM_RESULT" = success
