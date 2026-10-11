@@ -531,6 +531,11 @@ pub fn reconcile(args: &Args, paths: &Paths, hypr: &mut impl Hypr) -> Result<Val
     let state_file = paths.directory.join("owner.json");
     let mut state = read_json(&state_file)?;
     if state.as_object().is_some_and(|o| o.is_empty()) {
+        // Fresh installations must not offer private-backend setup on a Core
+        // floating-workspace host. Presence is not proof of a loaded ABI/owner.
+        if paths.official_library.exists() {
+            return Ok(json!({"state":"blocked","message":MIGRATION_REQUIRED}));
+        }
         return Ok(
             json!({"state":"setup-required","message":"Build the Rust helper and run title-bar setup from Familiar's settings."}),
         );
