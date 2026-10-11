@@ -105,7 +105,7 @@ Item {
             try {
                 var result = JSON.parse(resultCollector.text)
                 root.state = exitCode === 0 ? (result.state || "failed") : "failed"
-                if (result.backend) root.backend = String(result.backend)
+                if (exitCode === 0) root.backend = String(result.backend || "familiar")
                 root.message = String(result.message || "Window-control update failed.").slice(0, 300)
             } catch (error) {
                 root.state = "failed"

@@ -50,7 +50,7 @@ Rectangle {
         }
         Text {
             Layout.fillWidth: true
-            text: root.controller.ready ? "The dock and window controls are ready. You can change your layout and preferences in Familiar at any time." : "Set up your dock and window controls. Familiar will download and verify the files it needs, then activate them here."
+            text: root.controller.officialTitlebars ? (root.controller.ready ? "Your dock is ready. Open Windows → Window controls to switch to Omarchy’s controls. Familiar’s Mac/Windows titlebar styling does not apply to Core-managed bars." : "Choose a dock layout. Familiar downloads its helper; Omarchy supplies the window controls. After setup, switch controls in Windows → Window controls.") : (root.controller.ready ? "The dock and window controls are ready. You can change your layout and preferences in Familiar at any time." : "Set up your dock and window controls. Familiar will download and verify the files it needs, then activate them here.")
             textFormat: Text.PlainText
             wrapMode: Text.WordWrap
             font.family: Commons.Style.font.family
@@ -67,7 +67,7 @@ Rectangle {
                     required property var modelData
                     Layout.fillWidth: true
                     implicitHeight: Commons.Style.space(64)
-                    text: modelData.label
+                    text: root.controller.officialTitlebars ? (modelData.key === "windows" ? "Windows\nDock layout" : "Mac\nDock layout") : modelData.label
                     selected: root.controller.style === modelData.key
                     onClicked: root.controller.style = modelData.key
                 }

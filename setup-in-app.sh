@@ -51,6 +51,9 @@ ready() {
   grep -qF -- '-- BEGIN Familiar Desktop title bars' "$config/hypr/looknfeel.lua" 2>/dev/null
 }
 if [[ "$mode" == status ]]; then
+  if [[ -f "$official_library" ]] || jq -e '.backend == "omarchy"' "$config/omarchy/familiar-titlebars/owner.json" >/dev/null 2>&1; then
+    echo 'Omarchy manages window controls.'
+  fi
   if ready; then echo 'Familiar is ready.'; exit 0; fi
   echo 'Set up Familiar to enable the dock and window controls.'
   exit 3
